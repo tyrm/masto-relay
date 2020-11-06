@@ -6,10 +6,13 @@ import uuid
 import re
 import simplejson as json
 import cgi
+import hashlib
+import base64
 from urllib.parse import urlsplit
 from Crypto.PublicKey import RSA
 from .database import DATABASE
 from .http_debug import http_debug
+from datetime import datetime
 
 from cachetools import LFUCache
 
@@ -75,6 +78,18 @@ from .http_signatures import sign_headers
 
 get_actor_inbox = lambda actor: actor.get('endpoints', {}).get('sharedInbox', actor['inbox'])
 
+def httpdate(dt):
+    """Return a string representation of a date according to RFC 1123
+    (HTTP/1.1).
+
+    The supplied date must be in UTC.
+
+    """
+    weekday = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][dt.weekday()]
+    month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep",
+             "Oct", "Nov", "Dec"][dt.month - 1]
+    return "%s, %02d %s %04d %02d:%02d:%02d GMT" % (weekday, dt.day, month,
+        dt.year, dt.hour, dt.minute, dt.second)
 
 async def push_message_to_actor(actor, message, our_key_id):
     inbox = get_actor_inbox(actor)
@@ -82,10 +97,14 @@ async def push_message_to_actor(actor, message, our_key_id):
 
     # XXX: Digest
     data = json.dumps(message)
+    digest = base64.b64encode(hashlib.sha256(data.encode('ascii')).digest())
     headers = {
         '(request-target)': 'post {}'.format(url.path),
         'Content-Length': str(len(data)),
         'Content-Type': 'application/activity+json',
+        'Date': httpdate(datetime.utcnow()),
+        'Digest': 'SHA-256={}'.format(digest.decode('ascii')),
+        'Host': url.hostname,
         'User-Agent': 'ActivityRelay'
     }
     headers['signature'] = sign_headers(headers, PRIVKEY, our_key_id)
